@@ -108,9 +108,13 @@ class MetalRender {
         display.set(encoder: encoder)
         encoder.popDebugGroup()
         encoder.endEncoding()
+        // 保住 CVPixelBuffer 直到 GPU 采样完成（替代原来的 waitUntilCompleted 同步等待：
+        // 同步等待会卡死主线程，触摸事件无法处理，导致转视角/FOV 卡顿）
+        commandBuffer.addCompletedHandler { _ in
+            withExtendedLifetime(pixelBuffer) {}
+        }
         commandBuffer.present(drawable)
         commandBuffer.commit()
-        commandBuffer.waitUntilCompleted()
     }
 
     private func setFragmentBuffer(pixelBuffer: PixelBufferProtocol, encoder: MTLRenderCommandEncoder) {
