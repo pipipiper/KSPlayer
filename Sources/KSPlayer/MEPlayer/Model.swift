@@ -80,6 +80,8 @@ protocol MEFrame: ObjectQueueItem {
 public extension KSOptions {
     /// 开启VR模式的陀飞轮
     static var enableSensor = true
+    /// VR 球面渲染视场角（弧度），运行时可调（双指缩放 FOV），渲染线程每帧读取
+    static var vrFov = Float.pi / 3
     static var stackSize = 65536
     static var isClearVideoWhereReplace = true
     static var audioPlayerType: AudioOutput.Type = AudioEnginePlayer.self

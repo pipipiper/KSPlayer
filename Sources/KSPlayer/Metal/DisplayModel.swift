@@ -15,6 +15,7 @@ import UIKit
 extension DisplayEnum {
     private static var planeDisplay = PlaneDisplayModel()
     private static var vrDiaplay = VRDisplayModel()
+    private static var vr180Display = VR180DisplayModel()
     private static var vrBoxDiaplay = VRBoxDisplayModel()
 
     func set(encoder: MTLRenderCommandEncoder) {
@@ -23,6 +24,8 @@ extension DisplayEnum {
             DisplayEnum.planeDisplay.set(encoder: encoder)
         case .vr:
             DisplayEnum.vrDiaplay.set(encoder: encoder)
+        case .vr180:
+            DisplayEnum.vr180Display.set(encoder: encoder)
         case .vrBox:
             DisplayEnum.vrBoxDiaplay.set(encoder: encoder)
         }
@@ -34,6 +37,8 @@ extension DisplayEnum {
             return DisplayEnum.planeDisplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
         case .vr:
             return DisplayEnum.vrDiaplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
+        case .vr180:
+            return DisplayEnum.vr180Display.pipeline(planeCount: planeCount, bitDepth: bitDepth)
         case .vrBox:
             return DisplayEnum.vrBoxDiaplay.pipeline(planeCount: planeCount, bitDepth: bitDepth)
         }
@@ -41,8 +46,12 @@ extension DisplayEnum {
 
     func touchesMoved(touch: UITouch) {
         switch self {
-        case .vr:
-            DisplayEnum.vrDiaplay.touchesMoved(touch: touch)
+        case .vr, .vr180:
+            if self == .vr {
+                DisplayEnum.vrDiaplay.touchesMoved(touch: touch)
+            } else {
+                DisplayEnum.vr180Display.touchesMoved(touch: touch)
+            }
         case .vrBox:
             DisplayEnum.vrBoxDiaplay.touchesMoved(touch: touch)
         default:
@@ -73,7 +82,8 @@ private class PlaneDisplayModel {
         uvBuffer = device.makeBuffer(bytes: uvs, length: MemoryLayout<simd_float2>.size * uvs.count)
     }
 
-    private static func genSphere() -> ([UInt16], [simd_float4], [simd_float2]) {
+    private class func genSphere() -> ([UInt16], [simd_float4], [simd_float2]) {
+        // 通过 Self.uvMapU 动态派发，子类（180°）可改变水平 UV 映射
         let indices: [UInt16] = [0, 1, 2, 3]
         let positions: [simd_float4] = [
             [-1.0, -1.0, 0.0, 1.0],
@@ -135,9 +145,12 @@ private class SphereDisplayModel {
     let indexBuffer: MTLBuffer
     let posBuffer: MTLBuffer?
     let uvBuffer: MTLBuffer?
+    /// 水平 UV 映射钩子：默认恒等；180° 半球模式重写为 (u-0.5)*2
+    class func uvMapU(_ u: Float) -> Float { u }
+
     @MainActor
-    fileprivate init() {
-        let (indices, positions, uvs) = SphereDisplayModel.genSphere()
+    fileprivate required init() {
+        let (indices, positions, uvs) = Self.genSphere()
         let device = MetalRender.device
         indexCount = indices.count
         indexBuffer = device.makeBuffer(bytes: indices, length: MemoryLayout<UInt16>.size * indexCount)!
@@ -183,7 +196,8 @@ private class SphereDisplayModel {
         modelViewMatrix = matrix_identity_float4x4
     }
 
-    private static func genSphere() -> ([UInt16], [simd_float4], [simd_float2]) {
+    private class func genSphere() -> ([UInt16], [simd_float4], [simd_float2]) {
+        // 通过 Self.uvMapU 动态派发，子类（180°）可改变水平 UV 映射
         let slicesCount = UInt16(200)
         let parallelsCount = slicesCount / 2
         let indicesCount = Int(slicesCount) * Int(parallelsCount) * 6
@@ -204,7 +218,7 @@ private class SphereDisplayModel {
                 let vertex4 = Float(j) / Float(slicesCount)
                 let vertex5 = Float(i) / Float(parallelsCount)
                 positions.append([vertex0, vertex1, vertex2, vertex3])
-                uvs.append([vertex4, vertex5])
+                uvs.append([Self.uvMapU(vertex4), vertex5])
                 if i < parallelsCount, j < slicesCount {
                     indices[runCount] = i * (slicesCount + 1) + j
                     runCount += 1
@@ -249,18 +263,30 @@ private class SphereDisplayModel {
 }
 
 private class VRDisplayModel: SphereDisplayModel {
-    private let modelViewProjectionMatrix: simd_float4x4
+    private var modelViewProjectionMatrix = matrix_identity_float4x4
+    private var appliedFov: Float = 0
 
     override required init() {
-        let size = KSOptions.sceneSize
-        let aspect = Float(size.width / size.height)
-        let projectionMatrix = simd_float4x4(perspective: Float.pi / 3, aspect: aspect, nearZ: 0.1, farZ: 400.0)
-        let viewMatrix = simd_float4x4(lookAt: SIMD3<Float>.zero, center: [0, 0, -1000], up: [0, 1, 0])
-        modelViewProjectionMatrix = projectionMatrix * viewMatrix
         super.init()
     }
 
+    /// FOV 或窗口尺寸变化时重建投影矩阵
+    func updateProjectionIfNeeded() {
+        let fov = KSOptions.vrFov
+        let size = KSOptions.sceneSize
+        let aspect = Float(size.width / size.height)
+        if fov != appliedFov || lastAspect != aspect {
+            appliedFov = fov
+            lastAspect = aspect
+            let projectionMatrix = simd_float4x4(perspective: fov, aspect: aspect, nearZ: 0.1, farZ: 400.0)
+            let viewMatrix = simd_float4x4(lookAt: SIMD3<Float>.zero, center: [0, 0, -1000], up: [0, 1, 0])
+            modelViewProjectionMatrix = projectionMatrix * viewMatrix
+        }
+    }
+    private var lastAspect: Float = 0
+
     override func set(encoder: MTLRenderCommandEncoder) {
+        updateProjectionIfNeeded()
         super.set(encoder: encoder)
         var matrix = modelViewProjectionMatrix * modelViewMatrix
         let matrixBuffer = MetalRender.device.makeBuffer(bytes: &matrix, length: MemoryLayout<simd_float4x4>.size)
@@ -270,20 +296,29 @@ private class VRDisplayModel: SphereDisplayModel {
 }
 
 private class VRBoxDisplayModel: SphereDisplayModel {
-    private let modelViewProjectionMatrixLeft: simd_float4x4
-    private let modelViewProjectionMatrixRight: simd_float4x4
+    private var modelViewProjectionMatrixLeft = matrix_identity_float4x4
+    private var modelViewProjectionMatrixRight = matrix_identity_float4x4
+    private var appliedFov: Float = 0
     override required init() {
-        let size = KSOptions.sceneSize
-        let aspect = Float(size.width / size.height) / 2
-        let viewMatrixLeft = simd_float4x4(lookAt: [-0.012, 0, 0], center: [0, 0, -1000], up: [0, 1, 0])
-        let viewMatrixRight = simd_float4x4(lookAt: [0.012, 0, 0], center: [0, 0, -1000], up: [0, 1, 0])
-        let projectionMatrix = simd_float4x4(perspective: Float.pi / 3, aspect: aspect, nearZ: 0.1, farZ: 400.0)
-        modelViewProjectionMatrixLeft = projectionMatrix * viewMatrixLeft
-        modelViewProjectionMatrixRight = projectionMatrix * viewMatrixRight
         super.init()
     }
 
+    private func updateProjectionIfNeeded() {
+        let fov = KSOptions.vrFov
+        if fov != appliedFov {
+            appliedFov = fov
+            let size = KSOptions.sceneSize
+            let aspect = Float(size.width / size.height) / 2
+            let viewMatrixLeft = simd_float4x4(lookAt: [-0.012, 0, 0], center: [0, 0, -1000], up: [0, 1, 0])
+            let viewMatrixRight = simd_float4x4(lookAt: [0.012, 0, 0], center: [0, 0, -1000], up: [0, 1, 0])
+            let projectionMatrix = simd_float4x4(perspective: fov, aspect: aspect, nearZ: 0.1, farZ: 400.0)
+            modelViewProjectionMatrixLeft = projectionMatrix * viewMatrixLeft
+            modelViewProjectionMatrixRight = projectionMatrix * viewMatrixRight
+        }
+    }
+
     override func set(encoder: MTLRenderCommandEncoder) {
+        updateProjectionIfNeeded()
         super.set(encoder: encoder)
         let layerSize = KSOptions.sceneSize
         let width = Double(layerSize.width / 2)
@@ -295,5 +330,14 @@ private class VRBoxDisplayModel: SphereDisplayModel {
             encoder.setVertexBuffer(matrixBuffer, offset: 0, index: 2)
             encoder.drawIndexedPrimitives(type: primitiveType, indexCount: indexCount, indexType: indexType, indexBuffer: indexBuffer, indexBufferOffset: 0)
         }
+    }
+}
+
+/// VR180：等距柱状 180°×180° 内容铺满前半球。
+/// 球面网格正面中心在 u=0.75（-z 方向），前半球对应 u∈[0.5,1.0]，
+/// 将视频纹理 u∈[0,1] 线性映射到该区间；后半球采样边缘（不可见区域）。
+private final class VR180DisplayModel: VRDisplayModel {
+    override class func uvMapU(_ u: Float) -> Float {
+        (u - 0.5) * 2
     }
 }

@@ -43,7 +43,12 @@ public final class MetalPlayView: UIView, VideoOutput {
                 if KSOptions.preferredFrame {
                     let preferredFramesPerSecond = ceil(fps)
                     if #available(iOS 15.0, tvOS 15.0, macOS 14.0, *) {
-                        displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: preferredFramesPerSecond, maximum: 2 * preferredFramesPerSecond, __preferred: preferredFramesPerSecond)
+                        if options.display == .plane {
+                            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: preferredFramesPerSecond, maximum: 2 * preferredFramesPerSecond, __preferred: preferredFramesPerSecond)
+                        } else {
+                            // VR 球面：渲染帧率与视频帧率解耦，视角转动始终 60-120Hz
+                            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, __preferred: 120)
+                        }
                     } else {
                         displayLink.preferredFramesPerSecond = Int(preferredFramesPerSecond) << 1
                     }
@@ -69,6 +74,7 @@ public final class MetalPlayView: UIView, VideoOutput {
     }
 
     private let metalView = MetalView()
+    private var lastVRSize = CGSize(width: 1280, height: 720)
     public weak var displayLayerDelegate: DisplayLayerDelegate?
     public init(options: KSOptions) {
         self.options = options
@@ -78,6 +84,9 @@ public final class MetalPlayView: UIView, VideoOutput {
         metalView.isHidden = true
         //        displayLink = CADisplayLink(block: renderFrame)
         displayLink = CADisplayLink(target: self, selector: #selector(renderFrame))
+        if options.display != .plane, #available(iOS 15.0, tvOS 15.0, macOS 14.0, *) {
+            displayLink.preferredFrameRateRange = CAFrameRateRange(minimum: 60, maximum: 120, __preferred: 120)
+        }
         // 一定要用common。不然在视频上面操作view的话，那就会卡顿了。
         displayLink.add(to: .main, forMode: .common)
         pause()
@@ -171,6 +180,10 @@ extension MetalPlayView {
     private func draw(force: Bool) {
         autoreleasepool {
             guard let frame = renderSource?.getVideoOutputRender(force: force) else {
+                // VR 球面：没有新视频帧也用上一帧重绘，视角转动与视频帧率解耦
+                if options.display != .plane, displayView.isHidden, let pixelBuffer {
+                    metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: lastVRSize)
+                }
                 return
             }
             pixelBuffer = frame.corePixelBuffer
@@ -207,7 +220,12 @@ extension MetalPlayView {
                         size = CGSize(width: par.width, height: par.height * sar.height / sar.width)
                     }
                 } else {
-                    size = KSOptions.sceneSize
+                    // sceneSize 是窗口点坐标；drawableSize 需要物理像素，
+                    // 乘 nativeScale 才不会按 1x 低分辨率渲染（清晰度劣化根因）
+                    let scale = window?.screen.nativeScale ?? 1
+                    size = CGSize(width: KSOptions.sceneSize.width * scale,
+                                  height: KSOptions.sceneSize.height * scale)
+                    lastVRSize = size
                 }
                 checkFormatDescription(pixelBuffer: pixelBuffer)
                 #if !os(tvOS)

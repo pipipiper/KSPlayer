@@ -142,6 +142,8 @@ public enum DisplayEnum {
     // swiftlint:disable identifier_name
     case vr
     // swiftlint:enable identifier_name
+    /// 180° 半球（VR180 等距柱状内容，铺满前半球）
+    case vr180
     case vrBox
 }
 
