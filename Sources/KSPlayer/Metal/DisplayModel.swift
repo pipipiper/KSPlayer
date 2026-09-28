@@ -168,7 +168,9 @@ private class SphereDisplayModel {
         encoder.setVertexBuffer(posBuffer, offset: 0, index: 0)
         encoder.setVertexBuffer(uvBuffer, offset: 0, index: 1)
         #if canImport(UIKit) && canImport(CoreMotion)
-        if KSOptions.enableSensor, let matrix = MotionSensor.shared.matrix() {
+        if let yaw = KSOptions.vrYaw, let pitch = KSOptions.vrPitch {
+            modelViewMatrix = matrix_identity_float4x4.rotateX(radians: pitch).rotateY(radians: yaw)
+        } else if KSOptions.enableSensor, let matrix = MotionSensor.shared.matrix() {
             modelViewMatrix = matrix
         }
         #endif

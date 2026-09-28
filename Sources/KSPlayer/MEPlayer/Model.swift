@@ -82,6 +82,10 @@ public extension KSOptions {
     static var enableSensor = true
     /// VR 球面渲染视场角（弧度），运行时可调（双指缩放 FOV），渲染线程每帧读取
     static var vrFov = Float.pi / 3
+    /// VR 外部视角控制（弧度，yaw 偏航 / pitch 俯仰）。两者都非 nil 时球面渲染直接使用，
+    /// 忽略内置触摸旋转与陀螺仪（由 App 层 SwiftUI 手势驱动）
+    static var vrYaw: Float?
+    static var vrPitch: Float?
     static var stackSize = 65536
     static var isClearVideoWhereReplace = true
     static var audioPlayerType: AudioOutput.Type = AudioEnginePlayer.self
