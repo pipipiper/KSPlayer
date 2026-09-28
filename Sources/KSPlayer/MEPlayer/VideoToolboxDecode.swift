@@ -47,7 +47,7 @@ class VideoToolboxDecode: DecodeProtocol {
             let packetFlags = corePacket.flags
             let duration = corePacket.duration
             let size = corePacket.size
-            let status = VTDecompressionSessionDecodeFrame(session.decompressionSession, sampleBuffer: sampleBuffer, flags: flags, infoFlagsOut: &flagOut) { [weak self] status, infoFlags, imageBuffer, _, _ in
+            let status = VTDecompressionSessionDecodeFrame(session.decompressionSession, sampleBuffer: sampleBuffer, flags: flags, infoFlagsOut: &flagOut) { [weak self] status, infoFlags, imageBuffer, presentationTime, _ in
                 guard let self, !infoFlags.contains(.frameDropped) else {
                     return
                 }
@@ -70,7 +70,16 @@ class VideoToolboxDecode: DecodeProtocol {
                 }
                 self.lastPosition = max(self.lastPosition, timestamp)
                 frame.position = packet.position
-                frame.timestamp = self.startTime + timestamp
+                // 有些视频 AVPacket 的 pts 顺序不对（B 帧），导致画面抖动；
+                // VideoToolbox 输出回调里的 presentationTime 是重排后的正确显示时间戳
+                let frameTimestamp: Int64
+                if presentationTime.isValid, presentationTime.isNumeric {
+                    let scaled = CMTimeConvertScale(presentationTime, timescale: session.assetTrack.timebase.den, method: .default)
+                    frameTimestamp = scaled.value / Int64(session.assetTrack.timebase.num)
+                } else {
+                    frameTimestamp = timestamp
+                }
+                frame.timestamp = self.startTime + frameTimestamp
                 frame.duration = duration
                 frame.size = size
                 self.lastPosition += frame.duration
