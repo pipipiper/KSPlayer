@@ -181,7 +181,7 @@ extension MetalPlayView {
         autoreleasepool {
             guard let frame = renderSource?.getVideoOutputRender(force: force) else {
                 // VR 球面：没有新视频帧也用上一帧重绘，视角转动与视频帧率解耦
-                if options.display != .plane, displayView.isHidden, let pixelBuffer {
+                if options.display != .plane, displayView.isHidden, let pixelBuffer, !KSOptions.vrPauseRerender {
                     metalView.draw(pixelBuffer: pixelBuffer, display: options.display, size: lastVRSize)
                 }
                 return

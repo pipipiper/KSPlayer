@@ -86,6 +86,9 @@ public extension KSOptions {
     /// 忽略内置触摸旋转与陀螺仪（由 App 层 SwiftUI 手势驱动）
     static var vrYaw: Float?
     static var vrPitch: Float?
+    /// 暂停「无新帧重绘」（弹层/列表覆盖播放画面时置 true：
+    /// 8K 120Hz 重绘会把 GPU 占满，覆盖层滑动会非常卡）
+    static var vrPauseRerender = false
     static var stackSize = 65536
     static var isClearVideoWhereReplace = true
     static var audioPlayerType: AudioOutput.Type = AudioEnginePlayer.self
