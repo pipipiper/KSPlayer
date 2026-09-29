@@ -38,7 +38,14 @@ class VideoToolboxDecode: DecodeProtocol {
             return
         }
         do {
-            let sampleBuffer = try session.formatDescription.getSampleBuffer(isConvertNALSize: session.assetTrack.isConvertNALSize, data: data, size: Int(corePacket.size))
+            let sampleBuffer = try session.formatDescription.getSampleBuffer(
+                isConvertNALSize: session.assetTrack.isConvertNALSize,
+                data: data,
+                size: Int(corePacket.size),
+                pts: corePacket.pts,
+                dts: corePacket.dts,
+                timebase: session.assetTrack.timebase
+            )
             let flags: VTDecodeFrameFlags = [
                 ._EnableAsynchronousDecompression,
             ]
@@ -166,7 +173,10 @@ class DecompressionSession {
 #endif
 
 extension CMFormatDescription {
-    fileprivate func getSampleBuffer(isConvertNALSize: Bool, data: UnsafeMutablePointer<UInt8>, size: Int) throws -> CMSampleBuffer {
+    fileprivate func getSampleBuffer(isConvertNALSize: Bool, data: UnsafeMutablePointer<UInt8>, size: Int, pts: Int64, dts: Int64, timebase: Timebase) throws -> CMSampleBuffer {
+        // 把 pts/dts 贴进 sample buffer，VT 才能做 B 帧重排并输出正确的 presentationTime
+        let presentationTime = pts == Int64.min ? CMTime.invalid : timebase.cmtime(for: pts)
+        let decodeTime = dts == Int64.min ? CMTime.invalid : timebase.cmtime(for: dts)
         if isConvertNALSize {
             var ioContext: UnsafeMutablePointer<AVIOContext>?
             let status = avio_open_dyn_buf(&ioContext)
@@ -183,22 +193,23 @@ extension CMFormatDescription {
                 }
                 var demuxBuffer: UnsafeMutablePointer<UInt8>?
                 let demuxSze = avio_close_dyn_buf(ioContext, &demuxBuffer)
-                return try createSampleBuffer(data: demuxBuffer, size: Int(demuxSze))
+                return try createSampleBuffer(data: demuxBuffer, size: Int(demuxSze), pts: presentationTime, dts: decodeTime)
             } else {
                 throw NSError(errorCode: .codecVideoReceiveFrame, avErrorCode: status)
             }
         } else {
-            return try createSampleBuffer(data: data, size: size)
+            return try createSampleBuffer(data: data, size: size, pts: presentationTime, dts: decodeTime)
         }
     }
 
-    private func createSampleBuffer(data: UnsafeMutablePointer<UInt8>?, size: Int) throws -> CMSampleBuffer {
+    private func createSampleBuffer(data: UnsafeMutablePointer<UInt8>?, size: Int, pts: CMTime, dts: CMTime) throws -> CMSampleBuffer {
         var blockBuffer: CMBlockBuffer?
         var sampleBuffer: CMSampleBuffer?
         // swiftlint:disable line_length
         var status = CMBlockBufferCreateWithMemoryBlock(allocator: kCFAllocatorDefault, memoryBlock: data, blockLength: size, blockAllocator: kCFAllocatorNull, customBlockSource: nil, offsetToData: 0, dataLength: size, flags: 0, blockBufferOut: &blockBuffer)
         if status == noErr {
-            status = CMSampleBufferCreate(allocator: kCFAllocatorDefault, dataBuffer: blockBuffer, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: self, sampleCount: 1, sampleTimingEntryCount: 0, sampleTimingArray: nil, sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sampleBuffer)
+            var timing = CMSampleTimingInfo(duration: .invalid, presentationTimeStamp: pts, decodeTimeStamp: dts)
+            status = CMSampleBufferCreate(allocator: kCFAllocatorDefault, dataBuffer: blockBuffer, dataReady: true, makeDataReadyCallback: nil, refcon: nil, formatDescription: self, sampleCount: 1, sampleTimingEntryCount: 1, sampleTimingArray: &timing, sampleSizeEntryCount: 0, sampleSizeArray: nil, sampleBufferOut: &sampleBuffer)
             if let sampleBuffer {
                 return sampleBuffer
             }
