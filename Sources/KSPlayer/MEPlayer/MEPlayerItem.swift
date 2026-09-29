@@ -870,7 +870,7 @@ extension MEPlayerItem: OutputRenderSourceDelegate {
             // 否则参考帧先于依赖它的 B 帧被消费，画面乱序抖动（实测 VT 异步解码不重排）。
             // 解码结束后队列不再增长，直接放行。软解（avcodec 内部已排好）攒帧只是略增起播延迟。
             let reorderWindow = min(5, max(1, videoTrack.outputRenderQueue.maxCount - 1))
-            if videoTrack.state != .finished, count < reorderWindow {
+            if state != .finished, count < reorderWindow {
                 return false
             }
             (self.dynamicInfo.audioVideoSyncDiff, type) = self.options.videoClockSync(main: self.mainClock(), nextVideoTime: frame.seconds, fps: Double(frame.fps), frameCount: count)
