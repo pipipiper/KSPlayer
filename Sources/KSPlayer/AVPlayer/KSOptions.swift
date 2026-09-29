@@ -241,8 +241,8 @@ open class KSOptions {
         // 高分辨率少缓存：8K NV12 每帧约 50MB，16 帧就是 800MB，
         // 软解时内存峰值直接触发 iOS 强杀（闪退无崩溃报告）
         let pixels = naturalSize.width * naturalSize.height
-        if pixels >= 7680 * 4320 { return 4 }
-        if pixels >= 3840 * 2160 { return 8 }
+        if pixels >= 7680 * 4320 { return 6 }
+        if pixels >= 3840 * 2160 { return 10 }
         return 16
     }
 
